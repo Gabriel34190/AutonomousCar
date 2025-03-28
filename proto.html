@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>3D Self-Driving Car with Obstacle Avoidance</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 10px;
+            font-family: Arial, sans-serif;
+            border-radius: 5px;
+            width: 300px;
+        }
+        #controls {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 10px;
+            font-family: Arial, sans-serif;
+            border-radius: 5px;
+        }
+        button {
+            padding: 5px 10px;
+            margin: 5px;
+            cursor: pointer;
+        }
+        .slider-container {
+            margin: 10px 0;
+        }
+        .slider-container label {
+            display: inline-block;
+            width: 150px;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">
+        <h3>Self-Driving Car AI</h3>
+        <div id="status">Status: Ready</div>
+        <div id="sensors">Sensors: Active</div>
+        <div id="decision">Decision: Cruising</div>
+    </div>
+    <div id="controls">
+        <button id="startBtn">Start Simulation</button>
+        <button id="resetBtn">Reset</button>
+        <div class="slider-container">
+            <label for="aggressiveness">Aggressiveness:</label>
+            <input type="range" id="aggressiveness" min="0" max="100" value="50">
+        </div>
+        <div class="slider-container">
+            <label for="safetyMargin">Safety Margin:</label>
+            <input type="range" id="safetyMargin" min="1" max="20" value="10">
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
+    <script>
+        // Scene setup
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB); // Sky blue
+        
+        // Camera setup
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 5, 15);
+        camera.lookAt(0, 0, 0);
+        
+        // Renderer setup
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+        
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0x404040);
+        scene.add(ambientLight);
+        
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(10, 20, 10);
+        directionalLight.castShadow = true;
+        directionalLight.shadow.mapSize.width = 2048;
+        directionalLight.shadow.mapSize.height = 2048;
+        scene.add(directionalLight);
+        
+        // Road parameters
+        const roadWidth = 10;
+        const laneWidth = 3;
+        const roadLength = 200;
+        const laneMarkingLength = 5;
+        const laneMarkingGap = 3;
+        
+        // Create road
+        function createRoad() {
+            // Road surface
+            const roadGeometry = new THREE.PlaneGeometry(roadWidth, roadLength);
+            const roadMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 });
+            const road = new THREE.Mesh(roadGeometry, roadMaterial);
+            road.rotation.x = -Math.PI / 2;
+            road.receiveShadow = true;
+            scene.add(road);
+            
+            // Lane markings
+            const laneMarkingMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff });
+            
+            // Left lane marking
+            const leftLaneMarking = new THREE.Group();
+            for (let z = -roadLength/2; z < roadLength/2; z += laneMarkingLength + laneMarkingGap) {
+                const markingGeometry = new THREE.PlaneGeometry(0.2, laneMarkingLength);
+                const marking = new THREE.Mesh(markingGeometry, laneMarkingMaterial);
+                marking.position.set(-laneWidth, 0.01, z);
+                marking.rotation.x = -Math.PI / 2;
+                leftLaneMarking.add(marking);
+            }
+            scene.add(leftLaneMarking);
+            
+            // Right lane marking
+            const rightLaneMarking = new THREE.Group();
+            for (let z = -roadLength/2; z < roadLength/2; z += laneMarkingLength + laneMarkingGap) {
+                const markingGeometry = new THREE.PlaneGeometry(0.2, laneMarkingLength);
+                const marking = new THREE.Mesh(markingGeometry, laneMarkingMaterial);
+                marking.position.set(laneWidth, 0.01, z);
+                marking.rotation.x = -Math.PI / 2;
+                rightLaneMarking.add(marking);
+            }
+            scene.add(rightLaneMarking);
+            
+            // Center lane markings (dashed)
+            const centerLaneMarking = new THREE.Group();
+            for (let z = -roadLength/2; z < roadLength/2; z += laneMarkingLength/2 + laneMarkingGap/2) {
+                const markingGeometry = new THREE.PlaneGeometry(0.2, laneMarkingLength/2);
+                const marking = new THREE.Mesh(markingGeometry, laneMarkingMaterial);
+                marking.position.set(0, 0.01, z);
+                marking.rotation.x = -Math.PI / 2;
+                centerLaneMarking.add(marking);
+            }
+            scene.add(centerLaneMarking);
+            
+            return { road, leftLaneMarking, rightLaneMarking, centerLaneMarking };
+        }
+        
+        // Create player car
+        function createCar() {
+            const car = new THREE.Group();
+            
+            // Car body
+            const bodyGeometry = new THREE.BoxGeometry(2, 1, 4);
+            const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+            const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+            body.position.y = 0.5;
+            body.castShadow = true;
+            car.add(body);
+            
+            // Car roof
+            const roofGeometry = new THREE.BoxGeometry(1.5, 0.5, 3);
+            const roofMaterial = new THREE.MeshStandardMaterial({ color: 0xaa0000 });
+            const roof = new THREE.Mesh(roofGeometry, roofMaterial);
+            roof.position.y = 1.25;
+            car.add(roof);
+            
+            // Wheels
+            const wheelGeometry = new THREE.CylinderGeometry(0.4, 0.4, 0.3, 16);
+            const wheelMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 });
+            
+            const positions = [
+                { x: 1, y: 0.3, z: 1.5 },
+                { x: -1, y: 0.3, z: 1.5 },
+                { x: 1, y: 0.3, z: -1.5 },
+                { x: -1, y: 0.3, z: -1.5 }
+            ];
+            
+            positions.forEach(pos => {
+                const wheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
+                wheel.position.set(pos.x, pos.y, pos.z);
+                wheel.rotation.z = Math.PI / 2;
+                wheel.castShadow = true;
+                car.add(wheel);
+            });
+            
+            car.position.y = 0.5;
+            scene.add(car);
+            
+            return car;
+        }
+        
+        // Create leading car (similar to player car but blue)
+        function createLeadingCar() {
+            const car = createCar();
+            car.children.forEach(child => {
+                if (child.material) {
+                    if (child.material.color.getHex() === 0xff0000) {
+                        child.material.color.set(0x0000ff);
+                    } else if (child.material.color.getHex() === 0xaa0000) {
+                        child.material.color.set(0x0000aa);
+                    }
+                }
+            });
+            return car;
+        }
+        
+        // Create environment
+        function createEnvironment() {
+            // Ground
+            const groundGeometry = new THREE.PlaneGeometry(200, 200);
+            const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x3a5f0b });
+            const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+            ground.rotation.x = -Math.PI / 2;
+            ground.position.y = -0.1;
+            ground.receiveShadow = true;
+            scene.add(ground);
+            
+            // Trees
+            const treeGeometry = new THREE.ConeGeometry(1, 3, 8);
+            const treeTrunkGeometry = new THREE.CylinderGeometry(0.3, 0.3, 2, 8);
+            const treeMaterial = new THREE.MeshStandardMaterial({ color: 0x2e8b57 });
+            const treeTrunkMaterial = new THREE.MeshStandardMaterial({ color: 0x8b4513 });
+            
+            for (let i = 0; i < 40; i++) {
+                const tree = new THREE.Group();
+                const angle = Math.random() * Math.PI * 2;
+                const distance = 20 + Math.random() * 60;
+                const x = Math.cos(angle) * distance;
+                const z = Math.sin(angle) * distance;
+                
+                const trunk = new THREE.Mesh(treeTrunkGeometry, treeTrunkMaterial);
+                trunk.position.y = 1;
+                trunk.castShadow = true;
+                tree.add(trunk);
+                
+                const leaves = new THREE.Mesh(treeGeometry, treeMaterial);
+                leaves.position.y = 3.5;
+                leaves.castShadow = true;
+                tree.add(leaves);
+                
+                tree.position.set(x, 0, z);
+                tree.rotation.y = Math.random() * Math.PI * 2;
+                scene.add(tree);
+            }
+        }
+        
+        // Initialize simulation objects
+        const road = createRoad();
+        const playerCar = createCar();
+        const leadingCar = createLeadingCar();
+        createEnvironment();
+        
+        // Simulation parameters
+        let currentSpeed = 20; // m/s (~72 km/h)
+        const maxSpeed = 30; // m/s (~108 km/h)
+        let leadingCarDistance = 100; // meters
+        let leadingCarSpeed = 15; // m/s (~54 km/h)
+        let decision = "Cruising";
+        let avoidanceDirection = 0; // -1 = left, 0 = none, 1 = right
+        let lastDecisionTime = 0;
+        
+        // AI parameters
+        let aggressiveness = 50;
+        let safetyMargin = 10; // meters
+        
+        // Camera follow mode
+        let followCamera = true;
+        
+        // Reset simulation
+        function resetSimulation() {
+            currentSpeed = 20;
+            leadingCarDistance = 100;
+            leadingCarSpeed = 15;
+            playerCar.position.set(0, 0.5, 0);
+            leadingCar.position.set(0, 0.5, -leadingCarDistance);
+            avoidanceDirection = 0;
+            decision = "Cruising";
+            updateInfo();
+        }
+        
+        // Update info display
+        function updateInfo() {
+            document.getElementById('status').innerHTML = `
+                Speed: ${(currentSpeed * 3.6).toFixed(1)} km/h<br>
+                Lead Car Distance: ${leadingCarDistance.toFixed(1)} m<br>
+                Lead Car Speed: ${(leadingCarSpeed * 3.6).toFixed(1)} km/h
+            `;
+            document.getElementById('decision').innerHTML = `
+                AI Decision: ${decision}<br>
+                Avoidance: ${avoidanceDirection === -1 ? "LEFT" : avoidanceDirection === 1 ? "RIGHT" : "NONE"}
+            `;
+        }
+        
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        
+        // Toggle camera mode on click
+        window.addEventListener('click', () => {
+            followCamera = !followCamera;
+            if (!followCamera) {
+                controls.enabled = true;
+            } else {
+                controls.enabled = false;
+                camera.position.set(
+                    playerCar.position.x,
+                    5,
+                    playerCar.position.z + 15
+                );
+                camera.lookAt(playerCar.position.x, 0, playerCar.position.z);
+            }
+            updateInfo();
+        });
+        
+        // Add orbit controls for when not in follow mode
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enabled = false;
+        
+        // Simulation state
+        let isRunning = false;
+        let lastTimestamp = 0;
+        
+        // AI decision making
+        function makeDecision(timestamp, deltaTime) {
+            const timeSinceLastDecision = timestamp - lastDecisionTime;
+            
+            // Calculate time to collision
+            const relativeSpeed = currentSpeed - leadingCarSpeed;
+            const timeToCollision = relativeSpeed > 0 ? leadingCarDistance / relativeSpeed : Infinity;
+            
+            // Calculate safe distance based on speed and aggressiveness
+            const dynamicSafetyMargin = safetyMargin * (1 + currentSpeed / maxSpeed) * (1 - aggressiveness / 200);
+            
+            // Make decisions based on situation
+            if (leadingCarDistance < dynamicSafetyMargin) {
+                // Need to take action
+                if (timeSinceLastDecision > 1000 || decision === "Cruising") {
+                    // Decide whether to change lanes or brake
+                    const randomFactor = Math.random() * 100;
+                    
+                    if (randomFactor < aggressiveness && leadingCarDistance > dynamicSafetyMargin * 0.5) {
+                        // Try to overtake
+                        if (Math.random() > 0.5) {
+                            avoidanceDirection = -1; // Left
+                            decision = "Overtaking Left";
+                        } else {
+                            avoidanceDirection = 1; // Right
+                            decision = "Overtaking Right";
+                        }
+                    } else {
+                        // Brake
+                        avoidanceDirection = 0;
+                        decision = "Braking";
+                    }
+                    
+                    lastDecisionTime = timestamp;
+                }
+            } else if (leadingCarDistance > dynamicSafetyMargin * 1.5 && avoidanceDirection !== 0) {
+                // Return to center lane
+                avoidanceDirection = 0;
+                decision = "Returning to Center";
+                lastDecisionTime = timestamp;
+            } else if (decision === "Cruising" && timeSinceLastDecision > 3000) {
+                // Random lane changes to simulate human-like behavior
+                if (Math.random() > 0.8) {
+                    avoidanceDirection = Math.random() > 0.5 ? -1 : 1;
+                    decision = "Lane Change";
+                    lastDecisionTime = timestamp;
+                }
+            }
+        }
+        
+        // Execute AI decisions
+        function executeDecision(deltaTime) {
+            const laneChangeSpeed = 5 * (aggressiveness / 50);
+            const maxLateralPosition = laneWidth - 1; // Keep within lane markers
+            
+            // Execute avoidance maneuver
+            if (avoidanceDirection !== 0) {
+                const targetX = avoidanceDirection * laneWidth;
+                playerCar.position.x += (targetX - playerCar.position.x) * laneChangeSpeed * deltaTime;
+            } else {
+                // Return to center
+                playerCar.position.x += (0 - playerCar.position.x) * laneChangeSpeed * deltaTime;
+            }
+            
+            // Limit lateral movement to stay on road
+            playerCar.position.x = Math.max(-maxLateralPosition, Math.min(maxLateralPosition, playerCar.position.x));
+            
+            // Adjust speed based on decision
+            if (decision.includes("Braking")) {
+                currentSpeed = Math.max(leadingCarSpeed, currentSpeed - 5 * deltaTime);
+            } else if (decision.includes("Overtaking")) {
+                currentSpeed = Math.min(maxSpeed, currentSpeed + 3 * deltaTime);
+            } else {
+                // Maintain speed with slight variations
+                const targetSpeed = leadingCarSpeed + 5;
+                currentSpeed += (targetSpeed - currentSpeed) * 0.2 * deltaTime;
+            }
+        }
+        
+        // Animation loop
+        function animate(timestamp) {
+            requestAnimationFrame(animate);
+            
+            const deltaTime = (timestamp - lastTimestamp) / 1000; // Convert to seconds
+            lastTimestamp = timestamp;
+            
+            if (isRunning) {
+                // Update leading car
+                leadingCarDistance -= (currentSpeed - leadingCarSpeed) * deltaTime;
+                leadingCar.position.z = playerCar.position.z - leadingCarDistance;
+                
+                // Add some lateral movement to leading car
+                leadingCar.position.x = Math.sin(timestamp * 0.0005) * 2;
+                
+                // Reset leading car when it gets too close
+                if (leadingCarDistance < 5) {
+                    leadingCarDistance = 100 + Math.random() * 50;
+                    leadingCarSpeed = 10 + Math.random() * 10;
+                }
+                
+                // AI decision making
+                makeDecision(timestamp, deltaTime);
+                
+                // Execute AI decisions
+                executeDecision(deltaTime);
+                
+                // Update camera in follow mode
+                if (followCamera) {
+                    camera.position.set(
+                        playerCar.position.x * 0.5, // Smooth camera follow
+                        5 + Math.sin(timestamp * 0.001) * 0.5, // Slight bob
+                        playerCar.position.z + 15
+                    );
+                    camera.lookAt(playerCar.position.x, 0, playerCar.position.z);
+                }
+                
+                updateInfo();
+            }
+            
+            // Rotate wheels
+            const wheelSpeed = currentSpeed * 10;
+            playerCar.children.forEach(child => {
+                if (child.geometry && child.geometry.type === 'CylinderGeometry') {
+                    child.rotation.x += wheelSpeed * deltaTime;
+                }
+            });
+            
+            leadingCar.children.forEach(child => {
+                if (child.geometry && child.geometry.type === 'CylinderGeometry') {
+                    child.rotation.x += leadingCarSpeed * 10 * deltaTime;
+                }
+            });
+            
+            renderer.render(scene, camera);
+        }
+        
+        // Start animation loop
+        animate(0);
+        
+        // Event listeners for controls
+        document.getElementById('startBtn').addEventListener('click', () => {
+            isRunning = !isRunning;
+            document.getElementById('startBtn').textContent = isRunning ? 'Pause Simulation' : 'Start Simulation';
+            updateInfo();
+        });
+        
+        document.getElementById('resetBtn').addEventListener('click', resetSimulation);
+        
+        // Update AI parameters from sliders
+        document.getElementById('aggressiveness').addEventListener('input', (e) => {
+            aggressiveness = parseInt(e.target.value);
+        });
+        
+        document.getElementById('safetyMargin').addEventListener('input', (e) => {
+            safetyMargin = parseInt(e.target.value);
+        });
+        
+        // Initial setup
+        resetSimulation();
+        updateInfo();
+    </script>
+</body>
+</html>
